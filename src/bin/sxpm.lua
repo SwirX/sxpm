@@ -17,6 +17,7 @@
 local manifest_module = dofile("/lib/pkg/manifest.lua")
 local database_module = dofile("/lib/pkg/database.lua")
 local resolve_module  = dofile("/lib/pkg/resolve.lua")
+local archive_module  = dofile("/lib/pkg/archive.lua")
 
 local args            = { ... }
 local subcommand      = args[1]
@@ -69,18 +70,28 @@ local function search_index_for_pkg(package_name)
     return nil
 end
 
-local function download_sxpkg(url)
-    local res = http.get(url)
-    if not res then return nil, "HTTP GET failed" end
-    local data = res.readAll()
-    res.close()
-
-    local str = string.gsub(data, "^return%s*", "")
-    local pkg_data = textutils.unserialize(str)
-    if type(pkg_data) ~= "table" then
-        return nil, "Corrupted .sxpkg format"
+local function download_sxpkg(url, out_path)
+    local res = http.get({ url = url, binary = true })
+    if not res then
+        res = http.get(url)
+        if not res then return false, "HTTP GET failed" end
     end
-    return pkg_data
+    local f = fs.open(out_path, "wb")
+    if not f then
+        res.close(); return false, "Could not open cache file"
+    end
+    while true do
+        local b = res.read()
+        if not b then break end
+        if type(b) == "number" then
+            f.write(b)
+        else
+            f.write(string.byte(b))
+        end
+    end
+    f.close()
+    res.close()
+    return true
 end
 
 local function cmd_install(package_name)
@@ -112,62 +123,62 @@ local function cmd_install(package_name)
         return
     end
 
+    local cache_dir = "/var/cache/sxpm"
+    if not fs.exists(cache_dir) then fs.makeDir(cache_dir) end
+    local cache_path = cache_dir .. "/" .. package_name .. "-" .. version .. ".sxpkg"
     print("Downloading " .. package_name .. " v" .. version .. " ...")
-    local sxpkg, err = download_sxpkg(v_data.url)
-    if not sxpkg then
-        printError("Failed to fetch archive: " .. tostring(err))
-        return
+    local success, err = download_sxpkg(v_data.url, cache_path)
+    if not success then
+        printError("Failed to fetch archive: " .. tostring(err)); return
     end
 
-    local pkg = sxpkg.metadata
-    if not pkg then
-        printError("Corrupt package chunk."); return
+    local temp_pkg = nil
+    local ok, err_ex = archive_module.extract(cache_path, function(filename, data)
+        if filename == "manifest.lua" then
+            local str = string.gsub(data, "^return%s*", "")
+            temp_pkg = textutils.unserialize(str)
+        end
+    end)
+    if not ok then
+        printError("Archive read error: " .. tostring(err_ex)); return
+    end
+
+    local pkg = temp_pkg
+    if not pkg or not pkg.name then
+        printError("Corrupt package chunk: missing manifest.lua"); return
     end
 
     -- Install dependencies
-    for dep_string, _ in pairs(v_data.dependencies or {}) do
-        local dep_name = dep_string
-        if type(dep_string) == "number" then dep_name = string.match(_, "^([%w%-_]+)") end
+    for dep_index, dep_val in pairs(pkg.dependencies or {}) do
+        local dep_name = dep_val
+        if type(dep_index) == "number" then dep_name = string.match(dep_val, "^([%w%-_]+)") end
         if dep_name and not database_module.get(dep_name) then
             print("Installing dependency: " .. dep_name)
             cmd_install(dep_name)
         end
     end
 
-    local install_path = INSTALL_BASE .. "/" .. package_name
-    if not fs.exists(install_path) then fs.makeDir(install_path) end
-
     print("Extracting files...")
-    for src_path, content in pairs(sxpkg.files or {}) do
-        local dest = nil
+    ok, err_ex = archive_module.extract(cache_path, function(filename, data)
         for _, file_entry in ipairs(pkg.files or {}) do
-            if file_entry.src == src_path then
-                dest = file_entry.dest; break
+            if file_entry.source == filename then
+                local dest = file_entry.path
+                if dest then
+                    local dest_dir = fs.getDir(dest)
+                    if dest_dir ~= "" and not fs.exists(dest_dir) then fs.makeDir(dest_dir) end
+                    local f = fs.open(dest, "wb")
+                    if f then
+                        for i = 1, #data do f.write(string.byte(string.sub(data, i, i))) end
+                        f.close()
+                        print("  Extracted " .. dest)
+                    end
+                end
             end
         end
-        if dest then
-            local dest_dir = fs.getDir(dest)
-            if dest_dir ~= "" and not fs.exists(dest_dir) then fs.makeDir(dest_dir) end
-            local f = fs.open(dest, "w")
-            if f then
-                f.write(content); f.close(); print("  Extracted " .. dest)
-            end
-        end
-    end
+    end)
 
-    -- Create wrapper scripts in /usr/bin for each declared binary.
-    if not fs.exists(BIN_DIR) then fs.makeDir(BIN_DIR) end
-    for _, bin_name in ipairs(pkg.binaries or {}) do
-        local wrapper_path = BIN_DIR .. "/" .. bin_name .. ".lua"
-        local real_path = install_path .. "/" .. bin_name .. ".lua"
-        local handle = fs.open(wrapper_path, "w")
-        if handle then
-            handle.write("dofile(\"" .. real_path .. "\")\n")
-            handle.close()
-        end
-    end
-
-    database_module.record_install(pkg, install_path)
+    if fs.exists(cache_path) then fs.delete(cache_path) end
+    database_module.record_install(pkg)
     print("Installed: " .. package_name .. " " .. pkg.version)
 end
 
@@ -182,14 +193,12 @@ local function cmd_remove(package_name)
         return
     end
 
-    -- Remove /usr/bin wrappers.
-    for _, bin_name in ipairs(record.binaries or {}) do
-        local wrapper_path = BIN_DIR .. "/" .. bin_name .. ".lua"
-        if fs.exists(wrapper_path) then fs.delete(wrapper_path) end
+    for _, file_entry in ipairs(record.files or {}) do
+        if file_entry.path and fs.exists(file_entry.path) then
+            fs.delete(file_entry.path)
+            print("  Removed " .. file_entry.path)
+        end
     end
-
-    -- Remove installed directory.
-    if fs.exists(record.install_path) then fs.delete(record.install_path) end
 
     database_module.record_remove(package_name)
     print("Removed: " .. package_name)
@@ -222,10 +231,7 @@ local function cmd_info(package_name)
     print("Name:    " .. record.name)
     print("Version: " .. record.version)
     print("Channel: " .. (record.channel or "stable"))
-    print("Path:    " .. record.install_path)
-    if record.binaries and #record.binaries > 0 then
-        print("Bins:    " .. table.concat(record.binaries, ", "))
-    end
+    print("Files:   " .. tostring(#(record.files or {})))
 end
 
 local function cmd_search(query)
@@ -306,39 +312,28 @@ local function cmd_build(manifest_path)
 
     print("Building package: " .. pkg.name .. " v" .. pkg.version)
 
-    local build_data = { metadata = pkg, files = {} }
     local base_dir = fs.getDir(manifest_path)
     if base_dir == "" then base_dir = fs.combine(_ENV.ENV and _ENV.ENV.PWD or "/", ".") end
 
-    local errors = 0
+    local out_name = pkg.name .. "-" .. pkg.version .. ".sxpkg"
+    local out_path = fs.combine(_ENV.ENV and _ENV.ENV.PWD or "/", out_name)
+
+    local files_to_pack = {}
+    files_to_pack["manifest.lua"] = fs.getName(manifest_path)
+
     for _, file_entry in ipairs(pkg.files or {}) do
-        local file_path = fs.combine(base_dir, file_entry.src)
-        write("  Packaging " .. file_entry.src .. "... ")
-        if fs.exists(file_path) and not fs.isDir(file_path) then
-            local f = fs.open(file_path, "r")
-            if f then
-                build_data.files[file_entry.src] = f.readAll(); f.close(); print("OK")
-            else
-                print("FAILED (fs)"); errors = errors + 1
-            end
-        else
-            print("FAILED (not found)"); errors = errors + 1
+        if file_entry.source then
+            files_to_pack[file_entry.source] = file_entry.source
         end
     end
 
-    if errors > 0 then
-        printError("Build failed with " .. errors .. " errors."); return
+    local ok, err_msg = archive_module.build(out_path, files_to_pack, base_dir)
+    if not ok then
+        printError("Build failed: " .. tostring(err_msg))
+        return
     end
 
-    local out_name = pkg.name .. "-" .. pkg.version .. ".sxpkg"
-    local out_path = fs.combine(_ENV.ENV and _ENV.ENV.PWD or "/", out_name)
-    local f_out = fs.open(out_path, "w")
-    if f_out then
-        f_out.write("return " .. textutils.serialize(build_data)); f_out.close()
-        print("\nSuccessfully built -> " .. out_name)
-    else
-        printError("Failed to write package file.")
-    end
+    print("\nSuccessfully built -> " .. out_name)
 end
 
 local function cmd_repo()
@@ -452,9 +447,9 @@ local function cmd_publish()
     print('    "versions": {')
     print('      "' .. version .. '": {')
     print('        "url": "https://raw.githubusercontent.com/SwirX/sxpm-repo/' ..
-    channel .. '/packages/' .. name .. '/' .. sxpkg_name .. '",')
+        channel .. '/packages/' .. name .. '/' .. sxpkg_name .. '",')
     print('        "sha256": "FILL_ME",')
-    print('        "dependencies": {}')
+    print('        "size": 12345')
     print('      }')
     print('    }')
     print('  }')

@@ -15,9 +15,9 @@
 --       dependencies = {
 --           "sxui >=1.0.0"
 --       },
---       binaries     = { "music" },
 --       files        = {
---           { src = "music.lua", dest = "/usr/lib/sxpkg/music/music.lua" }
+--           { path = "/usr/bin/music.lua", source = "music/bin.lua", executable = true },
+--           { path = "/usr/lib/music/core.lua", source = "music/core.lua" }
 --       },
 --   }
 

@@ -44,13 +44,12 @@ end
 
 -- Record a newly installed package.
 -- pkg_manifest: the validated manifest table from manifest.lua
--- install_path: absolute path to the package's installed directory
-function database.record_install(pkg_manifest, install_path)
+function database.record_install(pkg_manifest)
     local db = load_db()
     db[pkg_manifest.name] = {
         name         = pkg_manifest.name,
         version      = pkg_manifest.version,
-        install_path = install_path,
+        files        = pkg_manifest.files or {},
         binaries     = pkg_manifest.binaries or {},
         channel      = pkg_manifest.channel or "stable",
         installed_at = os.time(),
