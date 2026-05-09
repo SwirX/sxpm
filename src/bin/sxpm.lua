@@ -135,8 +135,13 @@ local function cmd_install(package_name)
     local temp_pkg = nil
     local ok, err_ex = archive_module.extract(cache_path, function(filename, data)
         if filename == "manifest.lua" then
-            local str = string.gsub(data, "^return%s*", "")
-            temp_pkg = textutils.unserialize(str)
+            local func, load_err = load(data, "manifest.lua", "t", {})
+            if func then
+                local ok_exec, res = pcall(func)
+                if ok_exec and type(res) == "table" then
+                    temp_pkg = res
+                end
+            end
         end
     end)
     if not ok then
