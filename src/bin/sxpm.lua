@@ -186,6 +186,7 @@ local function cmd_install(package_name)
                 if ok_exec and type(res) == "table" then
                     temp_pkg = res
                     print('Manifest exec success')
+                    res.self = res
                     printTable(res)
                     -- print(res.name)
                 else
