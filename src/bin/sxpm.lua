@@ -188,7 +188,7 @@ local function cmd_install(package_name)
                     print('Manifest exec success')
                     res.self = res
                     printTable(res)
-                    -- print(res.name)
+                    print('res.name: ' .. tostring(res.name))
                 else
                     printError("Manifest exec error: " .. tostring(res))
                 end
