@@ -79,7 +79,7 @@ end
 function database.load_repos()
     if not fs.exists(REPO_CONFIG_PATH) then
         return {
-            { name = "sxos-stable", url = "https://sxos.example/repo/stable", channel = "stable" }
+            { name = "stable", url = "https://raw.githubusercontent.com/SwirX/sxpm-repo/stable/index.json", channel = "stable" }
         }
     end
     local ok, result = pcall(dofile, REPO_CONFIG_PATH)
