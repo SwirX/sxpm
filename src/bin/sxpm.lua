@@ -184,13 +184,17 @@ local function cmd_install(package_name)
             if func then
                 local ok_exec, res = pcall(func)
                 if ok_exec and type(res) == "table" then
+                    -- Normalise manifest: promote meta.* fields to the top
+                    -- level so pkg.name / pkg.version are always accessible,
+                    -- regardless of whether the manifest uses the flat or
+                    -- nested-meta format.
+                    if type(res.meta) == "table" then
+                        for k, v in pairs(res.meta) do
+                            if res[k] == nil then res[k] = v end
+                        end
+                    end
                     temp_pkg = res
-                    print('Manifest exec success')
-                    res.self = res
-                    local paste_id = shell.run('pastebin', 'put', textutils.serializeJSON(res))
-                    print('Paste ID: ' .. tostring(paste_id))
-                    -- printTable(res)
-                    print('res.name: ' .. tostring(res.name))
+                    print('Manifest exec success, name=' .. tostring(res.name))
                 else
                     printError("Manifest exec error: " .. tostring(res))
                 end
