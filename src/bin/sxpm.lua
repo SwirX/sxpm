@@ -142,6 +142,8 @@ local function cmd_install(package_name)
                 local ok_exec, res = pcall(func)
                 if ok_exec and type(res) == "table" then
                     temp_pkg = res
+                    print('Manifest exec success')
+                    print(res)
                 else
                     printError("Manifest exec error: " .. tostring(res))
                 end
