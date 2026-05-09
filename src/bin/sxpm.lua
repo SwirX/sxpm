@@ -134,6 +134,7 @@ local function cmd_install(package_name)
 
     local temp_pkg = nil
     local ok, err_ex = archive_module.extract(cache_path, function(filename, data)
+        print('Extracting ' .. filename .. ' ...')
         if filename == "manifest.lua" then
             local loader = loadstring or load
             local func, load_err = loader(data, "manifest.lua")
