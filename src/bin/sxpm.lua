@@ -187,7 +187,7 @@ local function cmd_install(package_name)
                     temp_pkg = res
                     print('Manifest exec success')
                     res.self = res
-                    shell.run('paste', textutils.serializeJSON(res))
+                    shell.run('pastebin', 'put', textutils.serializeJSON(res))
                     -- printTable(res)
                     print('res.name: ' .. tostring(res.name))
                 else
