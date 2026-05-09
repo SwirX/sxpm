@@ -14,6 +14,49 @@
 --   sxpm build <manifest_path>
 --   sxpm publish <manifest_path>
 
+-- helper function (debugging)
+local function printTable(value, indent, visited)
+    indent = indent or 0
+    visited = visited or {}
+
+    local spacing = string.rep("  ", indent)
+
+    if type(value) ~= "table" then
+        print(spacing .. tostring(value))
+        return
+    end
+
+    if visited[value] then
+        print(spacing .. "<recursive reference>")
+        return
+    end
+
+    visited[value] = true
+
+    print(spacing .. "{")
+
+    for key, nestedValue in pairs(value) do
+        local formattedKey
+
+        if type(key) == "string" then
+            formattedKey = key
+        else
+            formattedKey = "[" .. tostring(key) .. "]"
+        end
+
+        io.write(spacing .. "  " .. formattedKey .. " = ")
+
+        if type(nestedValue) == "table" then
+            print()
+            printTable(nestedValue, indent + 1, visited)
+        else
+            print(tostring(nestedValue))
+        end
+    end
+
+    print(spacing .. "}")
+end
+
 local manifest_module = dofile("/lib/pkg/manifest.lua")
 local database_module = dofile("/lib/pkg/database.lua")
 local resolve_module  = dofile("/lib/pkg/resolve.lua")
@@ -143,7 +186,8 @@ local function cmd_install(package_name)
                 if ok_exec and type(res) == "table" then
                     temp_pkg = res
                     print('Manifest exec success')
-                    print(res)
+                    printTable(res)
+                    -- print(res.name)
                 else
                     printError("Manifest exec error: " .. tostring(res))
                 end
