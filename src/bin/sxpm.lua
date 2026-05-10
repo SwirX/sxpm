@@ -113,6 +113,14 @@ local function search_index_for_pkg(package_name)
     return nil
 end
 
+local function is_protected(path)
+    if string.match(path, "^/boot/") then return true end
+    if string.match(path, "^/sys/") then return true end
+    if string.match(path, "^/lib/") then return true end
+    if string.match(path, "^/var/lib/sxpm/") then return true end
+    return false
+end
+
 local function download_sxpkg(url, out_path)
     local res = http.get({ url = url, binary = true })
     if not res then
@@ -272,7 +280,7 @@ local function cmd_install(package_name)
     print("Installed: " .. package_name .. " " .. pkg.version)
 end
 
-local function cmd_remove(package_name)
+local function cmd_remove(package_name, force)
     if not package_name then
         printError("sxpm remove: package name required")
         return
@@ -298,8 +306,12 @@ local function cmd_remove(package_name)
 
     for _, file_entry in ipairs(record.files or {}) do
         if file_entry.path and fs.exists(file_entry.path) then
-            fs.delete(file_entry.path)
-            print("  Removed " .. file_entry.path)
+            if not force and is_protected(file_entry.path) then
+                print("  Skipped protected namespace: " .. file_entry.path)
+            else
+                fs.delete(file_entry.path)
+                print("  Removed " .. file_entry.path)
+            end
         end
     end
 
@@ -391,19 +403,99 @@ local function cmd_sync()
     end
 end
 
+local function perform_self_upgrade(index_entry)
+    local version = index_entry.latest
+    local v_data = index_entry.versions[version]
+    if not v_data.url then return end
+
+    local cache_dir = "/var/cache/sxpm"
+    local cache_path = cache_dir .. "/sxpm-" .. version .. ".sxpkg"
+    print("Downloading sxpm v" .. version .. " ...")
+    local success, err = download_sxpkg(v_data.url, cache_path)
+    if not success then
+        printError("Failed to fetch sxpm archive"); return
+    end
+
+    local temp_dir = "/tmp/sxpm-upgrade"
+    if fs.exists(temp_dir) then fs.delete(temp_dir) end
+    fs.makeDir(temp_dir)
+
+    print("Extracting sxpm into temporary directory...")
+    local pkg_meta
+    local ok, err_ex = archive_module.extract(cache_path, function(filename, data)
+        if filename == "manifest.lua" then
+            local loader = loadstring or load
+            local func = loader(data, "manifest.lua")
+            if func then
+                local ok_exec, res = pcall(func)
+                if ok_exec and type(res) == "table" then
+                    if type(res.meta) == "table" then
+                        for k, v in pairs(res.meta) do
+                            if res[k] == nil then res[k] = v end
+                        end
+                    end
+                    pkg_meta = res
+                end
+            end
+        end
+        local temp_file_path = temp_dir .. "/" .. filename
+        local d = fs.getDir(temp_file_path)
+        if not fs.exists(d) then fs.makeDir(d) end
+        local f = fs.open(temp_file_path, "wb")
+        if f then
+            for i = 1, #data do f.write(string.byte(string.sub(data, i, i))) end
+            f.close()
+        end
+    end)
+
+    if not ok or not pkg_meta then
+        printError("Failed to extract sxpm upgrade: " .. tostring(err_ex))
+        return
+    end
+
+    print("Swapping binaries...")
+    for _, file_entry in ipairs(pkg_meta.files or {}) do
+        if file_entry.source and file_entry.path then
+            local src = temp_dir .. "/" .. file_entry.source
+            if fs.exists(src) then
+                if fs.exists(file_entry.path) then fs.delete(file_entry.path) end
+                local parent = fs.getDir(file_entry.path)
+                if not fs.exists(parent) then fs.makeDir(parent) end
+                pcall(fs.copy, src, file_entry.path)
+                print("  Updated " .. file_entry.path)
+            end
+        end
+    end
+
+    fs.delete(temp_dir)
+    database_module.record_install(pkg_meta)
+    print("sxpm upgraded to " .. pkg_meta.version)
+end
+
 local function cmd_upgrade()
     print("Upgrading installed packages...")
     cmd_sync()
     local db = database_module.list_all()
+    local self_upgrade_pending = nil
+
     for name, pkg in pairs(db) do
         local index_entry = search_index_for_pkg(name)
         if index_entry and index_entry.latest and index_entry.latest ~= pkg.version then
-            print("Package '" .. name .. "': " .. pkg.version .. " -> " .. index_entry.latest)
-            cmd_remove(name)
-            cmd_install(name)
+            if name == "sxpm" then
+                self_upgrade_pending = index_entry
+            else
+                print("Package '" .. name .. "': " .. pkg.version .. " -> " .. index_entry.latest)
+                cmd_remove(name, true)
+                cmd_install(name)
+            end
         else
             print("Package '" .. name .. "' is already up to date.")
         end
+    end
+
+    if self_upgrade_pending then
+        print("\nsxpm has a core upgrade available -> " .. self_upgrade_pending.latest)
+        perform_self_upgrade(self_upgrade_pending)
     end
 end
 
@@ -514,8 +606,17 @@ local function cmd_reinstall(pkg)
     if not pkg then
         print("Usage: sxpm reinstall <package>"); return
     end
+    if pkg == "sxpm" then
+        local index_entry = search_index_for_pkg("sxpm")
+        if index_entry then
+            perform_self_upgrade(index_entry)
+        else
+            printError("Cannot find sxpm in repositories.")
+        end
+        return
+    end
     print("Reinstalling " .. pkg .. "...")
-    cmd_remove(pkg)
+    cmd_remove(pkg, true)
     cmd_install(pkg)
 end
 
@@ -571,7 +672,7 @@ end
 if subcommand == "install" then
     cmd_install(args[2])
 elseif subcommand == "remove" then
-    cmd_remove(args[2])
+    cmd_remove(args[2], args[3] == "--force")
 elseif subcommand == "list" then
     cmd_list()
 elseif subcommand == "info" then
