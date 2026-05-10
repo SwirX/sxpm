@@ -49,8 +49,12 @@ function database.record_install(pkg_manifest)
     db[pkg_manifest.name] = {
         name         = pkg_manifest.name,
         version      = pkg_manifest.version,
+        package_type = pkg_manifest.package_type or "application",
         files        = pkg_manifest.files or {},
         binaries     = pkg_manifest.binaries or {},
+        provides     = pkg_manifest.provides or {},
+        dependencies = pkg_manifest.dependencies or {},
+        services     = pkg_manifest.services or {},
         channel      = pkg_manifest.channel or "stable",
         installed_at = os.time(),
     }
@@ -67,6 +71,35 @@ end
 -- Check if a package is installed. Returns the record or nil.
 function database.get(package_name)
     return load_db()[package_name]
+end
+
+-- Find a package that matches exactly or provides the given capability.
+function database.find_provider(dep_name)
+    local db = load_db()
+    if db[dep_name] then return db[dep_name] end
+    for name, record in pairs(db) do
+        if record.provides then
+            for _, prov in ipairs(record.provides) do
+                if prov == dep_name then return record end
+            end
+        end
+    end
+    return nil
+end
+
+-- Get packages that depend on the given package.
+function database.get_reverse_dependencies(package_name)
+    local db = load_db()
+    local rev = {}
+    for name, record in pairs(db) do
+        for _, dep_decl in ipairs(record.dependencies or {}) do
+            local dep_name = string.match(dep_decl, "^([%S]+)")
+            if dep_name == package_name then
+                table.insert(rev, name)
+            end
+        end
+    end
+    return rev
 end
 
 -- Return all installed package records.

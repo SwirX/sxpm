@@ -12,9 +12,10 @@ local database_module = dofile("/lib/pkg/database.lua")
 -- dep: parsed dependency table from manifest.parse_dependency()
 -- Returns true if satisfied, false + reason string if not.
 local function dependency_satisfied(dep)
-    local installed = database_module.get(dep.name)
+    -- Check exact match or any package that 'provides' this dependency name
+    local installed = database_module.find_provider(dep.name)
     if not installed then
-        return false, dep.name .. " is not installed"
+        return false, dep.name .. " is not installed and no provider found"
     end
 
     -- No version constraint: any installed version is fine.
@@ -22,7 +23,9 @@ local function dependency_satisfied(dep)
 
     local installed_ver = manifest_module.parse_version(installed.version)
     if not installed_ver then
-        return false, dep.name .. " has an unparseable version: " .. tostring(installed.version)
+        return false,
+            installed.name ..
+            " (provides " .. dep.name .. ") has an unparseable version: " .. tostring(installed.version)
     end
 
     local comparison = manifest_module.compare_versions(installed_ver, dep.version)

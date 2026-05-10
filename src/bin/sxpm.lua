@@ -212,15 +212,30 @@ local function cmd_install(package_name)
         printError("Corrupt package chunk: missing manifest.lua"); return
     end
 
+    local ok_compat, compat_mod = pcall(dofile, "/lib/pkg/compatibility.lua")
+    if ok_compat then
+        local is_compat, compat_errs = compat_mod.check_platform(pkg)
+        if not is_compat then
+            printError("Platform compatibility check failed:")
+            for _, e in ipairs(compat_errs) do printError("- " .. e) end
+            return
+        end
+    end
+
     -- Install dependencies
     for dep_index, dep_val in pairs(pkg.dependencies or {}) do
         local dep_name = dep_val
         if type(dep_index) == "number" then dep_name = string.match(dep_val, "^([%w%-_]+)") end
-        if dep_name and not database_module.get(dep_name) then
+        if dep_name and not database_module.find_provider(dep_name) then
             print("Installing dependency: " .. dep_name)
             cmd_install(dep_name)
         end
     end
+
+    local ok1, lifecycle_module = pcall(dofile, "/lib/pkg/lifecycle.lua")
+    local ok2, services_module = pcall(dofile, "/lib/pkg/services.lua")
+
+    if ok1 then lifecycle_module.pre_install(pkg, "/") end
 
     print("Extracting files...")
     ok, err_ex = archive_module.extract(cache_path, function(filename, data)
@@ -234,12 +249,23 @@ local function cmd_install(package_name)
                     if f then
                         for i = 1, #data do f.write(string.byte(string.sub(data, i, i))) end
                         f.close()
+
+                        if file_entry.permissions and type(fs.setPermissions) == "function" then
+                            pcall(fs.setPermissions, dest, file_entry.permissions)
+                        end
+                        if file_entry.owner and type(fs.setOwner) == "function" then
+                            pcall(fs.setOwner, dest, file_entry.owner)
+                        end
+
                         print("  Extracted " .. dest)
                     end
                 end
             end
         end
     end)
+
+    if ok1 then lifecycle_module.post_install(pkg, "/") end
+    if ok2 then services_module.register(pkg) end
 
     if fs.exists(cache_path) then fs.delete(cache_path) end
     database_module.record_install(pkg)
@@ -257,12 +283,28 @@ local function cmd_remove(package_name)
         return
     end
 
+    local rev_deps = database_module.get_reverse_dependencies(package_name)
+    if rev_deps and #rev_deps > 0 then
+        printError("Cannot remove package " .. package_name .. ":")
+        printError("Required by:")
+        for _, req in ipairs(rev_deps) do print("- " .. req) end
+        return
+    end
+
+    local ok1, lifecycle_module = pcall(dofile, "/lib/pkg/lifecycle.lua")
+    local ok2, services_module = pcall(dofile, "/lib/pkg/services.lua")
+
+    if ok1 then lifecycle_module.pre_remove(record, "/") end
+
     for _, file_entry in ipairs(record.files or {}) do
         if file_entry.path and fs.exists(file_entry.path) then
             fs.delete(file_entry.path)
             print("  Removed " .. file_entry.path)
         end
     end
+
+    if ok2 then services_module.unregister(record) end
+    if ok1 then lifecycle_module.post_remove(record, "/") end
 
     database_module.record_remove(package_name)
     print("Removed: " .. package_name)

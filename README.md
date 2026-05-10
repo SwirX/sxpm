@@ -75,24 +75,38 @@ A `.sxpkg` is a streamable binary archive in the `SXP1` format containing:
 return {
     format = "sxpkg-1",
 
-    meta = {
-        name        = "myapp",
-        version     = "1.0.0",
-        author      = "You",
-        channel     = "stable",
-        description = "My application.",
-    },
+    name         = "myapp",
+    version      = "1.0.0",
+    package_type = "application",
+    author       = "You",
+    channel      = "stable",
+    description  = "My application.",
 
     dependencies = { "sxui" },
+    provides     = { "my-app-provider" },
+
+    platform = {
+        sxos = "2.0.0",
+        cc = "1.109.0"
+    },
 
     files = {
-        { path = "/usr/bin/myapp.lua", source = "bin/myapp.lua", executable = true },
-        { path = "/lib/myapp/core.lua", source = "lib/core.lua" },
+        { path = "/usr/bin/myapp.lua", source = "bin/myapp.lua", permissions = "755" },
+        { path = "/lib/myapp/core.lua", source = "lib/core.lua", owner = "root" },
+    },
+
+    binaries = {
+        myapp = "/usr/bin/myapp.lua"
     },
 
     lifecycle = {
+        pre_install = "scripts/pre_install.lua",
         post_install = "scripts/post_install.lua",
     },
+
+    services = {
+        { name = "myappd", start = "/usr/bin/myapp.lua --daemon", restart = "always" }
+    }
 }
 ```
 
@@ -158,4 +172,7 @@ sxpm/
       manifest.lua          Manifest parser and validator
       database.lua          Installed package database
       resolve.lua           Dependency resolver
+      compatibility.lua     Platform and compatibility validation
+      lifecycle.lua         Lifecycle hooks executor
+      services.lua          Service metadata and declarative registry
 ```

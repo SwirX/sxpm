@@ -62,7 +62,6 @@ function manifest.parse_dependency(dep_str)
     }
 end
 
--- Validate a manifest table. Returns true or false, error_message.
 function manifest.validate(pkg)
     if type(pkg) ~= "table" then return false, "manifest must be a table" end
     if type(pkg.name) ~= "string" or #pkg.name == 0 then
@@ -74,6 +73,13 @@ function manifest.validate(pkg)
     if not manifest.parse_version(pkg.version) then
         return false, "manifest.version is not valid semver: " .. pkg.version
     end
+
+    local p_type = pkg.package_type
+    local valid_types = { system = true, library = true, application = true, service = true, theme = true, meta = true }
+    if type(p_type) ~= "string" or not valid_types[p_type] then
+        return false, "manifest.package_type must be explicit (system, library, application, service, theme, meta)"
+    end
+
     return true
 end
 
