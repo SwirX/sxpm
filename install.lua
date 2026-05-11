@@ -81,6 +81,9 @@ info("Installing sxpm from branch: " .. BRANCH)
 print("")
 
 local failed = 0
+if not is_sxos() then
+    FILES[1].dst = "/sxpm.lua"
+end
 for _, entry in ipairs(FILES) do
     local url = RAW_BASE .. "/" .. entry.src
     if not download(url, entry.dst) then
@@ -89,14 +92,16 @@ for _, entry in ipairs(FILES) do
 end
 
 -- Create a shell alias so `sxpm` works without the .lua extension
-local alias_path = "/usr/bin/sxpm"
-if not fs.exists(alias_path) then
-    local af = fs.open(alias_path, "w")
-    if af then
-        -- CraftOS shell strips .lua when resolving /usr/bin, so a plain
-        -- redirect script is the safest portable approach.
-        af.write("shell.run(\"/usr/bin/sxpm.lua\", ...)\n")
-        af.close()
+if is_sxos() then
+    local alias_path = "/usr/bin/sxpm"
+    if not fs.exists(alias_path) then
+        local af = fs.open(alias_path, "w")
+        if af then
+            -- CraftOS shell strips .lua when resolving /usr/bin, so a plain
+            -- redirect script is the safest portable approach.
+            af.write("shell.run(\"/usr/bin/sxpm.lua\", ...)\n")
+            af.close()
+        end
     end
 end
 
